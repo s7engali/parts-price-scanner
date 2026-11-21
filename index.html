@@ -46,7 +46,7 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 <p>Point your rear camera at a barcode. The scanner reads it automatically—no photo or Capture button.</p>
 <div class="camera"><div id="reader" aria-label="Live barcode camera preview"></div></div>
 <div class="controls">
-<div class="control" id="cameraControl" hidden><label for="cameraSelect">Camera lens</label><select id="cameraSelect" aria-label="Select camera lens"></select><div class="hint">Select Main or Macro if the view is too wide. Your choice is remembered.</div></div>
+<div class="control" id="cameraControl" hidden><label for="cameraSelect">Camera lens</label><select id="cameraSelect" aria-label="Select camera lens"></select><div class="hint">Android starts on Camera 0 when available. iPhone defaults to a rear camera. Choose a different lens here if needed; your choice is remembered.</div></div>
 <div class="control" id="zoomControl" hidden><label for="zoom">Close-up zoom</label><div class="zoomrow"><input id="zoom" type="range" min="1" max="2" step="0.1" value="1.5"><span id="zoomvalue">1.5×</span></div></div>
 </div>
 <div class="guide">Hold the barcode inside the frame. Start about 15–25 cm away, then adjust distance until it looks sharp. Two matching reads are required.</div>
@@ -61,7 +61,9 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 'use strict';
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
 const nonce=params.get('nonce')||'',candidate=params.get('return')||'';
-const CAMERA_KEY='pv-preferred-camera-v2',ZOOM_KEY='pv-preferred-zoom-v2';
+const CAMERA_KEY='pv-preferred-camera-v3',ZOOM_KEY='pv-preferred-zoom-v2';
+const IS_ANDROID=/Android/i.test(navigator.userAgent||'');
+const IS_APPLE_MOBILE=/iPhone|iPad|iPod/i.test(navigator.userAgent||'')||(/Macintosh/i.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1);
 const MIN_VERIFY_MS=160,MAX_VERIFY_MS=2800;
 let returnUrl='',scanner=null,done=false,ack=false,code='',timer=null,zoomTimer=null;
 let cameras=[],chosenCamera='',switching=false;
@@ -85,7 +87,7 @@ return n
 function populateCameras(){
 const sel=$('cameraSelect');
 sel.replaceChildren();
-for(const cam of cameras){const opt=document.createElement('option');opt.value=cam.id;opt.textContent=cam.label||'Camera '+(sel.options.length+1);sel.appendChild(opt)}
+for(const cam of cameras){const opt=document.createElement('option');opt.value=cam.id;opt.textContent=cam.label||'Camera '+sel.options.length;sel.appendChild(opt)}
 $('cameraControl').hidden=cameras.length<2;
 if(chosenCamera)sel.value=chosenCamera
 }
@@ -96,7 +98,17 @@ cameras=Array.isArray(list)?list.filter(c=>c.id):[];
 const saved=getPref(CAMERA_KEY);
 if(chosenCamera&&!cameras.some(c=>c.id===chosenCamera))chosenCamera='';
 if(!chosenCamera&&saved&&cameras.some(c=>c.id===saved))chosenCamera=saved;
-if(!chosenCamera&&cameras.length)chosenCamera=[...cameras].sort((a,b)=>cameraScore(b)-cameraScore(a))[0].id;
+if(!chosenCamera&&cameras.length){
+if(IS_ANDROID){
+const cameraZero=cameras.find(c=>/^camera[\s_-]*0$/i.test((c.label||'').trim()));
+chosenCamera=(cameraZero||cameras[0]).id;
+}else{
+const ranked=[...cameras].sort((a,b)=>cameraScore(b)-cameraScore(a));
+const identifiedRear=ranked.find(c=>cameraScore(c)>0);
+if(identifiedRear)chosenCamera=identifiedRear.id;
+else if(!IS_APPLE_MOBILE)chosenCamera=ranked[0].id;
+}
+}
 populateCameras()
 }catch(_){cameras=[];$('cameraControl').hidden=true}
 return chosenCamera||{facingMode:'environment'}
@@ -179,7 +191,7 @@ switching=true;
 clearTimeout(timer);firstCode='';firstAt=0;done=false;ack=false;code='';
 $('result').hidden=true;$('retry').hidden=true;$('return').hidden=true;
 $('zoomControl').hidden=true;$('cameraSelect').disabled=true;
-status('Selecting close-up rear camera…');
+status(IS_ANDROID?'Selecting Camera 0…':'Selecting rear camera…');
 await stop();
 try{
 if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw Error('Camera requires HTTPS and a supported browser.');
