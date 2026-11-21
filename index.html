@@ -235,12 +235,12 @@ const fmt=window.Html5QrcodeSupportedFormats||{};
 const formats=['CODE_128','CODE_39','CODE_93','EAN_13','EAN_8','UPC_A','UPC_E','ITF','CODABAR','QR_CODE','DATA_MATRIX','PDF_417']
 .map(k=>fmt[k]).filter(v=>v!==undefined);
 const camera=await chooseCamera();
-scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false});
-const config={fps:12,qrbox:(w,h)=>({width:Math.max(80,Math.min(w-24,320)),height:Math.max(70,Math.min(h-24,150))}),disableFlip:true};
+scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false,experimentalFeatures:{useBarCodeDetectorIfSupported:true}});
+const config={fps:16,qrbox:(w,h)=>({width:Math.max(80,Math.min(w-16,520)),height:Math.max(70,Math.min(h-16,170))}),disableFlip:true};
 try{await scanner.start(camera,config,onDecoded,()=>{})}
 catch(e){
 if(typeof camera==='string'&&cameras.length){
-await stop();scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false});
+await stop();scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false,experimentalFeatures:{useBarCodeDetectorIfSupported:true}});
 await scanner.start({facingMode:'environment'},config,onDecoded,()=>{})
 }else throw e
 }
