@@ -27,6 +27,15 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 .result{padding:16px;border:1px solid #4f9377;background:#1a3d33;border-radius:16px;margin-top:14px;word-break:break-word}
 .result strong{font-size:1.25rem;color:#d3ffe6;display:block;margin:5px 0 1px}
 .subtle{font-size:.79rem;color:var(--muted);margin-top:14px}
+.controls{display:grid;gap:12px;margin-top:14px}
+.control{display:grid;gap:6px}
+.control label{font-weight:700;font-size:.86rem;color:#deebfa}
+.control select{width:100%;min-height:45px;border:1px solid #71829c;border-radius:11px;background:#233952;color:#fff;padding:9px;font:inherit}
+.control select option{background:#233952;color:#fff}
+.zoomrow{display:flex;gap:10px;align-items:center}
+#zoom{width:100%;min-height:30px;accent-color:#b8dfff}
+#zoomvalue{min-width:47px;text-align:right;font-weight:750}
+.hint{font-size:.78rem;line-height:1.45;color:#b7c4d6}
 [hidden]{display:none!important}:focus-visible{outline:3px solid #8ccaff;outline-offset:3px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
@@ -36,7 +45,11 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 <header><div><div class="eyebrow">Parts Price Viewer</div><h1>Live Barcode Scanner</h1></div><button class="close" id="close" aria-label="Close scanner">×</button></header>
 <p>Point your rear camera at a barcode. The scanner reads it automatically—no photo or Capture button.</p>
 <div class="camera"><div id="reader" aria-label="Live barcode camera preview"></div></div>
-<div class="guide">Hold the full barcode inside the guide. Avoid glare and keep the phone steady.</div>
+<div class="controls">
+<div class="control" id="cameraControl" hidden><label for="cameraSelect">Camera lens</label><select id="cameraSelect" aria-label="Select camera lens"></select><div class="hint">Select Main or Macro if the view is too wide. Your choice is remembered.</div></div>
+<div class="control" id="zoomControl" hidden><label for="zoom">Close-up zoom</label><div class="zoomrow"><input id="zoom" type="range" min="1" max="2" step="0.1" value="1.5"><span id="zoomvalue">1.5×</span></div></div>
+</div>
+<div class="guide">Hold the barcode inside the frame. Start about 15–25 cm away, then adjust distance until it looks sharp. Two matching reads are required.</div>
 <div class="status" id="status" role="status" aria-live="polite">Preparing camera…</div>
 <div class="result" id="result" hidden><span>Scanned part number</span><strong id="code"></strong></div>
 <button class="action secondary" id="retry" hidden>Retry camera</button>
@@ -48,15 +61,52 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 'use strict';
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
 const nonce=params.get('nonce')||'',candidate=params.get('return')||'';
-let returnUrl='',scanner=null,done=false,ack=false,code='',timer=null;
+const CAMERA_KEY='pv-preferred-camera-v2',ZOOM_KEY='pv-preferred-zoom-v2';
+const MIN_VERIFY_MS=160,MAX_VERIFY_MS=2800;
+let returnUrl='',scanner=null,done=false,ack=false,code='',timer=null,zoomTimer=null;
+let cameras=[],chosenCamera='',switching=false;
+let firstCode='',firstAt=0;
 try{const u=new URL(candidate);if(u.origin==='https://script.google.com'&&/^\/macros\/s\/[^/]+\/(exec|dev)$/.test(u.pathname))returnUrl=u.href}catch(_){}
+function getPref(key){try{return localStorage.getItem(key)||''}catch(_){return ''}}
+function setPref(key,value){try{localStorage.setItem(key,value)}catch(_){}}
 function status(message,kind=''){$('status').textContent=message;$('status').className='status '+kind}
 function normalize(v){let s=String(v||'').trim().replace(/\s+/g,'');return /^[a-z0-9][a-z0-9._\/\-]{2,79}$/i.test(s)?s:''}
+function cameraScore(cam){
+const s=(cam.label||'').toLowerCase();
+let n=0;
+if(/back|rear|environment|world/.test(s))n+=50;
+if(/macro|close.?up/.test(s))n+=130;
+if(/main|primary|standard|1[.,]0x/.test(s))n+=80;
+if(/ultra.?wide|ultrawide|0[.,]5x|0[.,]6x/.test(s))n-=220;
+if(/front|selfie|facetime/.test(s))n-=170;
+if(/telephoto|periscope/.test(s))n-=30;
+return n
+}
+function populateCameras(){
+const sel=$('cameraSelect');
+sel.replaceChildren();
+for(const cam of cameras){const opt=document.createElement('option');opt.value=cam.id;opt.textContent=cam.label||'Camera '+(sel.options.length+1);sel.appendChild(opt)}
+$('cameraControl').hidden=cameras.length<2;
+if(chosenCamera)sel.value=chosenCamera
+}
+async function chooseCamera(){
+try{
+const list=await Html5Qrcode.getCameras();
+cameras=Array.isArray(list)?list.filter(c=>c.id):[];
+const saved=getPref(CAMERA_KEY);
+if(chosenCamera&&!cameras.some(c=>c.id===chosenCamera))chosenCamera='';
+if(!chosenCamera&&saved&&cameras.some(c=>c.id===saved))chosenCamera=saved;
+if(!chosenCamera&&cameras.length)chosenCamera=[...cameras].sort((a,b)=>cameraScore(b)-cameraScore(a))[0].id;
+populateCameras()
+}catch(_){cameras=[];$('cameraControl').hidden=true}
+return chosenCamera||{facingMode:'environment'}
+}
 async function stop(){
+clearTimeout(zoomTimer);
 if(!scanner)return;
-try{if(scanner.isScanning)await scanner.stop()}catch(_){}
-try{scanner.clear()}catch(_){}
-scanner=null
+const old=scanner;scanner=null;
+try{if(old.isScanning)await old.stop()}catch(_){}
+try{old.clear()}catch(_){}
 }
 function urlToViewer(){
 if(!returnUrl||!code)return '';
@@ -75,37 +125,99 @@ try{window.opener.focus()}catch(_){}
 try{window.close()}catch(_){}
 $('return').hidden=false
 });
-async function found(raw){
-if(done)return;
-const foundCode=normalize(raw);if(!foundCode)return;
-done=true;code=foundCode;$('code').textContent=code;$('result').hidden=false;
-status('Barcode recognized. Searching price list…','ok');$('return').hidden=false;
+async function confirmed(foundCode){
+if(done||switching)return;
+done=true;code=foundCode;firstCode='';firstAt=0;
+$('code').textContent=code;$('result').hidden=false;
+status('Confirmed twice! Searching price list…','ok');$('return').hidden=false;
 try{if(window.opener&&nonce)window.opener.postMessage({type:'PV_LIVE_BARCODE_V1',nonce,code},'*')}catch(_){}
 timer=setTimeout(()=>{if(!ack)back()},1400);
 await stop()
 }
+function onDecoded(raw){
+if(done||switching)return;
+const detected=normalize(raw);if(!detected)return;
+const now=performance.now();
+if(!firstCode||detected!==firstCode||now-firstAt>MAX_VERIFY_MS){
+firstCode=detected;firstAt=now;
+status('Verifying barcode — read 1 of 2. Hold steady…');
+return
+}
+if(now-firstAt<MIN_VERIFY_MS)return;
+confirmed(detected)
+}
+async function setZoom(value){
+if(!scanner?.isScanning||done)return;
+try{await scanner.applyVideoConstraints({advanced:[{zoom:Number(value)}]});setPref(ZOOM_KEY,String(value))}catch(_){}
+}
+async function tuneCamera(){
+$('zoomControl').hidden=true;
+if(!scanner?.isScanning||done)return;
+try{
+const caps=scanner.getRunningTrackCapabilities();
+if(Array.isArray(caps.focusMode)&&caps.focusMode.includes('continuous')){
+try{await scanner.applyVideoConstraints({advanced:[{focusMode:'continuous'}]})}catch(_){}
+}
+const z=caps.zoom;
+if(z&&Number.isFinite(z.min)&&Number.isFinite(z.max)&&z.max>z.min){
+const lo=z.min,hi=Math.min(z.max,5);
+if(hi<=lo)return;
+const saved=Number(getPref(ZOOM_KEY));
+const fallback=Math.min(hi,Math.max(lo,1.5));
+const target=Number.isFinite(saved)&&saved>0?Math.min(hi,Math.max(lo,saved)):fallback;
+const input=$('zoom');
+input.min=String(lo);input.max=String(hi);input.step=String(z.step&&z.step>0?z.step:0.1);
+input.value=String(target);$('zoomvalue').textContent=target.toFixed(1)+'×';
+$('zoomControl').hidden=false;
+await setZoom(target)
+}
+}catch(_){}
+}
 async function start(){
-clearTimeout(timer);done=false;ack=false;code='';
+if(switching)return;
+switching=true;
+clearTimeout(timer);firstCode='';firstAt=0;done=false;ack=false;code='';
 $('result').hidden=true;$('retry').hidden=true;$('return').hidden=true;
-status('Requesting camera permission…');
-if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){
-status('Camera requires HTTPS and a supported browser. Open this page in Chrome or Safari.','error');$('retry').hidden=false;return;
-}
-if(typeof Html5Qrcode==='undefined'){
-status('Barcode decoder could not load. Connect to the internet and refresh.','error');$('retry').hidden=false;return;
-}
+$('zoomControl').hidden=true;$('cameraSelect').disabled=true;
+status('Selecting close-up rear camera…');
+await stop();
+try{
+if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw Error('Camera requires HTTPS and a supported browser.');
+if(typeof Html5Qrcode==='undefined')throw Error('Barcode decoder could not load. Check your internet connection.');
 const fmt=window.Html5QrcodeSupportedFormats||{};
 const formats=['CODE_128','CODE_39','CODE_93','EAN_13','EAN_8','UPC_A','UPC_E','ITF','CODABAR','QR_CODE','DATA_MATRIX','PDF_417']
 .map(k=>fmt[k]).filter(v=>v!==undefined);
+const camera=await chooseCamera();
 scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false});
 const config={fps:12,qrbox:(w,h)=>({width:Math.max(80,Math.min(w-24,320)),height:Math.max(70,Math.min(h-24,150))}),disableFlip:true};
-try{await scanner.start({facingMode:'environment'},config,found,()=>{});if(!done)status('Camera ready. Point at a barcode.','ok')}
+try{await scanner.start(camera,config,onDecoded,()=>{})}
 catch(e){
-let message=String(e?.message||e||''),name=String(e?.name||'');
-status(/notallowed|permission|denied/i.test(name+' '+message)?'Camera permission denied. Allow camera access for this GitHub Pages site in your browser settings and retry.':'Cannot start camera. Close other camera apps, check HTTPS, then retry. '+message,'error');
-await stop();$('retry').hidden=false
+if(typeof camera==='string'&&cameras.length){
+await stop();scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false});
+await scanner.start({facingMode:'environment'},config,onDecoded,()=>{})
+}else throw e
+}
+switching=false;
+$('cameraSelect').disabled=false;
+status('Camera ready. Aim at a barcode — two matching reads required.','ok');
+await tuneCamera()
+}catch(e){
+const message=String(e?.message||e||''),name=String(e?.name||'');
+status(/notallowed|permission|denied/i.test(name+' '+message)?'Camera permission denied. Allow camera access for this GitHub Pages site and retry.':'Cannot start camera. '+message,'error');
+await stop();$('retry').hidden=false;
+switching=false;$('cameraSelect').disabled=false
 }
 }
+$('cameraSelect').addEventListener('change',async()=>{
+if(switching)return;
+chosenCamera=$('cameraSelect').value;
+setPref(CAMERA_KEY,chosenCamera);
+await start()
+});
+$('zoom').addEventListener('input',()=>{
+const v=$('zoom').value;$('zoomvalue').textContent=Number(v).toFixed(1)+'×';
+clearTimeout(zoomTimer);zoomTimer=setTimeout(()=>setZoom(v),90)
+});
 $('retry').onclick=start;$('return').onclick=back;
 $('close').onclick=()=>{clearTimeout(timer);stop();try{window.close()}catch(_){};try{window.opener?.focus()}catch(_){};if(!window.opener&&returnUrl)location.replace(returnUrl)};
 window.addEventListener('pagehide',()=>{clearTimeout(timer);stop()});
