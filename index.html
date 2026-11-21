@@ -19,7 +19,17 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 #reader{width:100%;min-height:235px}#reader video{max-width:100%;border-radius:18px;object-fit:cover}
 #reader__scan_region{min-height:220px}#reader__dashboard{display:none!important}
 .guide{padding:13px 2px 0;color:#d6e5f5;font-size:.89rem;text-align:center}
-.status{margin:17px 0 12px;padding:14px 15px;background:#20324a;border-radius:13px;border:1px solid #3b516d;font-weight:650;line-height:1.4}
+.status{display:flex;align-items:center;gap:10px;margin:12px 0;padding:11px 12px;background:#20324a;border-radius:11px;border:1px solid #3b516d;font-weight:650;line-height:1.35;font-size:.89rem;min-height:45px}
+.status:before{content:"";width:10px;height:10px;flex:0 0 10px;border-radius:50%;background:#8ea7c7}
+.status.scanning:before{background:#62bbff;animation:scanpulse 1.2s ease-in-out infinite}
+.status.verifying{background:#3c3925;border-color:#9a8c48;color:#fff1af}
+.status.verifying:before{background:#ffde6a;animation:scanpulse .75s ease-in-out infinite}
+.status.warning{background:#44392a;border-color:#9e773b;color:#ffe2b8}
+.status.warning:before{background:#ffb556}
+.status.ok:before{background:#6ce4a6}
+.status.error:before{background:#ff839f}
+@keyframes scanpulse{50%{opacity:.45;transform:scale(.76)}}
+@media(prefers-reduced-motion:reduce){.status:before{animation:none}}
 .status.ok{background:#173f32;border-color:#368666;color:#c6ffe1}
 .status.error{background:#543040;border-color:#9d546d;color:#ffe4eb}
 .action{background:#eef5fc;color:#142338;border:0;border-radius:13px;width:100%;min-height:51px;padding:12px 16px;font-weight:800;margin-top:9px}
@@ -45,12 +55,12 @@ button{font:inherit;cursor:pointer;touch-action:manipulation}
 <header><div><div class="eyebrow">Parts Price Viewer</div><h1>Live Barcode Scanner</h1></div><button class="close" id="close" aria-label="Close scanner">×</button></header>
 <p>Point your rear camera at a barcode. The scanner reads it automatically—no photo or Capture button.</p>
 <div class="camera"><div id="reader" aria-label="Live barcode camera preview"></div></div>
+<div class="status scanning" id="status" role="status" aria-live="polite">Preparing camera…</div>
 <div class="controls">
 <div class="control" id="cameraControl" hidden><label for="cameraSelect">Camera lens</label><select id="cameraSelect" aria-label="Select camera lens"></select><div class="hint">Android starts on Camera 0 when available. iPhone defaults to a rear camera. Choose a different lens here if needed; your choice is remembered.</div></div>
 <div class="control" id="zoomControl" hidden><label for="zoom">Close-up zoom</label><div class="zoomrow"><input id="zoom" type="range" min="1" max="2" step="0.1" value="1.5"><span id="zoomvalue">1.5×</span></div></div>
 </div>
 <div class="guide">Hold the barcode inside the frame. Start about 15–25 cm away, then adjust distance until it looks sharp. Two matching reads are required.</div>
-<div class="status" id="status" role="status" aria-live="polite">Preparing camera…</div>
 <div class="result" id="result" hidden><span>Scanned part number</span><strong id="code"></strong></div>
 <button class="action secondary" id="retry" hidden>Retry camera</button>
 <button class="action" id="return" hidden>Open matching part in Price Viewer</button>
