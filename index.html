@@ -75,13 +75,38 @@ const CAMERA_KEY='pv-preferred-camera-v3',ZOOM_KEY='pv-preferred-zoom-v2';
 const IS_ANDROID=/Android/i.test(navigator.userAgent||'');
 const IS_APPLE_MOBILE=/iPhone|iPad|iPod/i.test(navigator.userAgent||'')||(/Macintosh/i.test(navigator.userAgent||'')&&navigator.maxTouchPoints>1);
 const MIN_VERIFY_MS=160,MAX_VERIFY_MS=2800;
-let returnUrl='',scanner=null,done=false,ack=false,code='',timer=null,zoomTimer=null;
+let returnUrl='',scanner=null,done=false,ack=false,code='',timer=null,zoomTimer=null,readWatchdog=null,scanStartedAt=0;
 let cameras=[],chosenCamera='',switching=false;
 let firstCode='',firstAt=0;
 try{const u=new URL(candidate);if(u.origin==='https://script.google.com'&&/^\/macros\/s\/[^/]+\/(exec|dev)$/.test(u.pathname))returnUrl=u.href}catch(_){}
 function getPref(key){try{return localStorage.getItem(key)||''}catch(_){return ''}}
 function setPref(key,value){try{localStorage.setItem(key,value)}catch(_){}}
-function status(message,kind=''){$('status').textContent=message;$('status').className='status '+kind}
+function status(message,kind=''){
+ const el=$('status'),style='status '+kind;
+ if(el.textContent!==message)el.textContent=message;
+ if(el.className!==style)el.className=style;
+}
+function stopReadWatchdog(){
+ if(readWatchdog!==null)clearInterval(readWatchdog);
+ readWatchdog=null;scanStartedAt=0;
+}
+function watchReadability(){
+ stopReadWatchdog();scanStartedAt=performance.now();
+ readWatchdog=setInterval(()=>{
+  if(done||switching||!scanner?.isScanning)return;
+  const now=performance.now();
+  if(firstCode){
+   if(now-firstAt>MAX_VERIFY_MS){
+    firstCode='';firstAt=0;
+    status('Could not verify barcode. Hold it steady and try again.','warning')
+   }
+   return;
+  }
+  const elapsed=now-scanStartedAt;
+  if(elapsed>7500)status('Still no readable barcode. Try another lens or brighter light.','warning');
+  else if(elapsed>3000)status('Cannot read barcode clearly yet. Adjust distance or lighting.','warning');
+ },400);
+}
 function normalize(v){let s=String(v||'').trim().replace(/\s+/g,'');return /^[a-z0-9][a-z0-9._\/\-]{2,79}$/i.test(s)?s:''}
 function cameraScore(cam){
 const s=(cam.label||'').toLowerCase();
@@ -124,7 +149,7 @@ populateCameras()
 return chosenCamera||{facingMode:'environment'}
 }
 async function stop(){
-clearTimeout(zoomTimer);
+stopReadWatchdog();clearTimeout(zoomTimer);
 if(!scanner)return;
 const old=scanner;scanner=null;
 try{if(old.isScanning)await old.stop()}catch(_){}
@@ -149,9 +174,9 @@ $('return').hidden=false
 });
 async function confirmed(foundCode){
 if(done||switching)return;
-done=true;code=foundCode;firstCode='';firstAt=0;
+done=true;code=foundCode;firstCode='';firstAt=0;stopReadWatchdog();
 $('code').textContent=code;$('result').hidden=false;
-status('Confirmed twice! Searching price list…','ok');$('return').hidden=false;
+status('Verified (2/2) • opening part…','ok');$('return').hidden=false;
 try{if(window.opener&&nonce)window.opener.postMessage({type:'PV_LIVE_BARCODE_V1',nonce,code},'*')}catch(_){}
 timer=setTimeout(()=>{if(!ack)back()},1400);
 await stop()
@@ -162,7 +187,7 @@ const detected=normalize(raw);if(!detected)return;
 const now=performance.now();
 if(!firstCode||detected!==firstCode||now-firstAt>MAX_VERIFY_MS){
 firstCode=detected;firstAt=now;
-status('Verifying barcode — read 1 of 2. Hold steady…');
+status('Barcode found • verifying (1/2)… Hold steady.','verifying');
 return
 }
 if(now-firstAt<MIN_VERIFY_MS)return;
@@ -201,7 +226,7 @@ switching=true;
 clearTimeout(timer);firstCode='';firstAt=0;done=false;ack=false;code='';
 $('result').hidden=true;$('retry').hidden=true;$('return').hidden=true;
 $('zoomControl').hidden=true;$('cameraSelect').disabled=true;
-status(IS_ANDROID?'Selecting Camera 0…':'Selecting rear camera…');
+status(IS_ANDROID?'Selecting Camera 0…':'Selecting rear camera…','scanning');
 await stop();
 try{
 if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw Error('Camera requires HTTPS and a supported browser.');
@@ -221,7 +246,7 @@ await scanner.start({facingMode:'environment'},config,onDecoded,()=>{})
 }
 switching=false;
 $('cameraSelect').disabled=false;
-status('Camera ready. Aim at a barcode — two matching reads required.','ok');
+if(!done){status('Scanning • hold barcode in frame.','scanning');watchReadability()}
 await tuneCamera()
 }catch(e){
 const message=String(e?.message||e||''),name=String(e?.name||'');
